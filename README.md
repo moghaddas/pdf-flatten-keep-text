@@ -1,12 +1,17 @@
 # pdf-flatten-keep-text
 
-A deck exported from Chrome opens black in macOS Preview. Chrome builds those
-pages from stacked transparency groups and luminosity soft masks, and Preview
-gives up compositing them. You get a black page, a blank one, or one that
-appears only after you scroll away and back.
+A slide deck opens black in macOS Preview. Pages paint only after a scroll, then
+un-paint when you scroll away. It reads like a viewer bug. It is the file.
 
-Plain Chrome printouts are fine. Gradients, shadows and masked artwork are what
-trigger it.
+Check `Producer` on a file that does this and you get `Skia/PDF`, Chrome's
+print-to-PDF backend. Skia builds each page from stacked transparency groups and
+luminosity soft masks, and a viewer has to alpha-composite every one of them on
+each repaint. Pile up enough and Preview gives up. Mine came out of Claude
+Design. A plain Chrome printout carries almost none of that structure and opens
+fine, so this is about heavy artwork, not about Chrome.
+
+Re-encoding the images does not help. Decoded weight falls, the pages stay
+black. Removing the compositing is what fixes it.
 
 This flattens the artwork to one opaque image per page and replays the text over
 it, so the page still selects, searches and copies.

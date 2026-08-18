@@ -1,9 +1,17 @@
-# Why your Chrome deck renders black in Preview
+# Why a Skia PDF renders black in macOS Preview
 
-A deck exported from Chrome opens black in macOS Preview. Same file, same page,
-fine in Chrome, fine in Acrobat, black in Preview. The usual advice is to
-re-encode the images. That does nothing, because the images were never the
-problem.
+A slide deck opened black in Preview. Same file, same page, fine in Chrome, fine
+in Acrobat, black in Preview. Pages painted only after a scroll, then un-painted
+when I scrolled away. It reads like a viewer bug. It is the file.
+
+The deck came out of Claude Design, which exports through Chrome's print-to-PDF
+backend. Check `Producer` and you get `Skia/PDF`. That is the population this is
+about. A plain Chrome printout of a web page has almost none of the structure
+below, and opens fine.
+
+The usual advice is to re-encode the images. That does nothing, because the
+images were never the problem. I tried it: decoded weight fell 3.5 times and
+every page stayed black.
 
 ## What is in the file
 

@@ -2,10 +2,11 @@
 """Flatten a PDF's artwork to one image per page while keeping the text real.
 
 Written for print-to-PDF exports from Chrome and anything else built on Skia.
-Those files render black or blank in macOS Preview because each page is a deep
-stack of soft masks, transparency groups and shading-filled forms that must be
-composited on every repaint. Re-encoding the embedded images does not fix that.
-Removing the compositing does.
+An artwork-heavy page from those exporters is a deep stack of soft masks,
+transparency groups and shading-filled forms that must be composited on every
+repaint. Pile up enough and macOS Preview renders the page black or blank, or
+paints it only after a scroll. Re-encoding the embedded images does not fix
+that. Removing the compositing does.
 
 The content stream is split in two. Everything that is not a text block is
 rasterised to a single opaque JPEG that becomes the page backdrop. The text
