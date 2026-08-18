@@ -1,0 +1,849 @@
+#!/usr/bin/env python3
+"""Flatten a PDF's artwork to one image per page while keeping the text real.
+
+Written for print-to-PDF exports from Chrome and anything else built on Skia.
+Those files render black or blank in macOS Preview because each page is a deep
+stack of soft masks, transparency groups and shading-filled forms that must be
+composited on every repaint. Re-encoding the embedded images does not fix that.
+Removing the compositing does.
+
+The content stream is split in two. Everything that is not a text block is
+rasterised to a single opaque JPEG that becomes the page backdrop. The text
+blocks are replayed on top as real text, with their original fonts, graphics
+state and clipping paths intact. The result has one image per page and no
+transparency groups, yet stays selectable, searchable and copyable, and its
+glyphs still scale to any zoom.
+
+This assumes text is the topmost layer. That holds for slide decks. It does
+not hold for a page with artwork drawn OVER text, such as a redaction box, a
+stamp or a watermark: the covered text is replayed above the box and becomes
+visible. Never run this on a redacted document.
+
+The output is checked after the build (page count, byte-identical text layer,
+one image per page, no compositing left on the drawing path). A failed check
+moves the output to <name>.rejected and exits 1.
+
+Usage:  pdf-flatten-keep-text IN.pdf [OUT.pdf]    (default OUT: IN-hybrid.pdf)
+        --dpi N          backdrop render resolution   (default 300)
+        --quality N      backdrop JPEG quality        (default 90)
+        --keep-temp      leave the intermediate files in place
+        --force          keep a failed output under its normal name
+"""
+import io
+import os
+import re
+import shutil
+import subprocess
+import sys
+import tempfile
+import zlib
+
+from PIL import Image, ImageChops, ImageFilter
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from ctok import Pdf, tokenize_with_inline_images, dict_span  # noqa: E402
+
+Image.MAX_IMAGE_PIXELS = None
+
+PATH_CONSTRUCT = {b'm', b'l', b'c', b'v', b'y', b'h', b're'}
+PATH_PAINT = {b'S', b's', b'f', b'F', b'f*', b'B', b'B*', b'b', b'b*', b'n'}
+CLIP = {b'W', b'W*'}
+TEXT_SHOW = {b'Tj', b'TJ', b"'", b'"'}
+DROP_IN_TEXT = {b'sh', b'BI', b'ID', b'EI'}
+
+
+# --------------------------------------------------------------- resources --
+
+def resolve(pdf, body, key):
+    """Dict bytes for /key in body, following a single indirect reference."""
+    if body is None:
+        return None
+    m = re.search(rb'/' + key + rb'\s+(\d+)\s+\d+\s+R', body)
+    if m:
+        d, _ = pdf.raw(int(m.group(1)))
+        return d
+    m = re.search(rb'/' + key + rb'\s*<<', body)
+    if m:
+        d, _ = dict_span(body, m.start() + len(key) + 1)
+        return d
+    return None
+
+
+def xobj_map(pdf, res):
+    xo = resolve(pdf, res, b'XObject')
+    if xo is None:
+        return {}
+    return {m.group(1): int(m.group(2))
+            for m in re.finditer(rb'/([^\s/<>\[\]]+)\s+(\d+)\s+\d+\s+R', xo)}
+
+
+def form_resources(pdf, num):
+    d, _ = pdf.raw(num)
+    return resolve(pdf, d, b'Resources') or d
+
+
+def softmask_forms(pdf):
+    """Forms used as a soft-mask group, plus everything they draw.
+
+    Their text blocks are mask geometry, not page text: Chrome renders gradient
+    text by filling a rectangle through an alpha mask whose group draws the
+    glyphs. Stripping text from these empties the mask and the fill vanishes,
+    so the backdrop pass must leave them exactly as they are.
+    """
+    seeds = set()
+    for num in pdf.objs:
+        d, _ = pdf.raw(num)
+        if not d or b'/SMask' not in d:
+            continue
+        for m in re.finditer(rb'/SMask\s*<<', d):
+            sub, _ = dict_span(d, m.start() + 6)
+            g = re.search(rb'/G\s+(\d+)\s+\d+\s+R', sub)
+            if g:
+                seeds.add(int(g.group(1)))
+        for m in re.finditer(rb'/SMask\s+(\d+)\s+\d+\s+R', d):
+            sd, _ = pdf.raw(int(m.group(1)))
+            g = re.search(rb'/G\s+(\d+)\s+\d+\s+R', sd) if sd else None
+            if g:
+                seeds.add(int(g.group(1)))
+
+    out, todo = set(), list(seeds)
+    while todo:
+        num = todo.pop()
+        if num in out:
+            continue
+        out.add(num)
+        d, _ = pdf.raw(num)
+        if not d or not re.search(rb'/Subtype\s*/Form', d):
+            continue
+        for sub in xobj_map(pdf, form_resources(pdf, num)).values():
+            if sub not in out:
+                todo.append(sub)
+    return out
+
+
+def forms_with_text(pdf, page_nums):
+    """Object numbers of Form XObjects that show text, directly or below."""
+    memo = {}
+
+    def scan(num, depth=0):
+        if num in memo:
+            return memo[num]
+        memo[num] = False                      # cycle guard
+        d, _ = pdf.raw(num)
+        if not d or not re.search(rb'/Subtype\s*/Form', d):
+            return False
+        data = pdf.stream_data(num)
+        if data is None or depth > 12:
+            return False
+        xm = xobj_map(pdf, form_resources(pdf, num))
+        found, stack = False, []
+        for kind, tok in tokenize_with_inline_images(data):
+            if kind == 'obj':
+                stack.append(tok)
+                continue
+            if kind == 'inline':
+                stack = []
+                continue
+            if tok in TEXT_SHOW:
+                found = True
+            elif tok == b'Do' and stack:
+                sub = xm.get(stack[-1].lstrip(b'/'))
+                if sub is not None and scan(sub, depth + 1):
+                    found = True
+            stack = []
+        memo[num] = found
+        return found
+
+    for pnum in page_nums:
+        for num in xobj_map(pdf, resolve(pdf, pdf.get(pnum), b'Resources')).values():
+            scan(num)
+    # forms reachable only from other forms
+    for num in list(pdf.objs):
+        d, _ = pdf.raw(num)
+        if d and re.search(rb'/Subtype\s*/Form', d):
+            scan(num)
+    return {k for k, v in memo.items() if v}
+
+
+# ------------------------------------------------------------- stream split --
+
+RES_OF_OP = {b'Do': b'XObject', b'gs': b'ExtGState', b'Tf': b'Font',
+             b'sh': b'Shading', b'cs': b'ColorSpace', b'CS': b'ColorSpace',
+             b'scn': b'Pattern', b'SCN': b'Pattern'}
+
+
+def smask_group(pdf, res, name):
+    """Object number of the form an ExtGState uses as its soft mask, if any."""
+    eg = resolve(pdf, res, b'ExtGState')
+    if not eg:
+        return None
+    key = re.escape(name.lstrip(b'/'))
+    m = re.search(rb'/' + key + rb'\s+(\d+)\s+\d+\s+R', eg)
+    if m:
+        d, _ = pdf.raw(int(m.group(1)))
+    else:
+        m = re.search(rb'/' + key + rb'\s*<<', eg)
+        if not m:
+            return None
+        d, _ = dict_span(eg, m.end() - 2)
+    if not d:
+        return None
+    m = re.search(rb'/SMask\s*<<', d)
+    if m:
+        sub, _ = dict_span(d, m.end() - 2)
+    else:
+        m = re.search(rb'/SMask\s+(\d+)\s+\d+\s+R', d)
+        if not m:
+            return None
+        sub, _ = pdf.raw(int(m.group(1)))
+    g = re.search(rb'/G\s+(\d+)\s+\d+\s+R', sub or b'')
+    return int(g.group(1)) if g else None
+
+
+def filter_stream(pdf, data, res, mode, textforms, ghosts=None):
+    """Rewrite a content stream keeping only the backdrop or only the text.
+
+    mode 'bg'   drops every BT..ET block, keeps all painting.
+    mode 'text' keeps graphics state, clipping and text; drops painting,
+                images, shadings and any form that shows no text.
+
+    Returns (stream_bytes, {resource_category: {names_actually_used}}) so the
+    caller can prune resource dictionaries down to what survived. Without that
+    pruning the discarded images and transparency groups stay reachable and
+    nothing is reclaimed.
+    """
+    xm = xobj_map(pdf, res)
+    out = bytearray()
+    stack = []            # pending operands
+    path = bytearray()    # buffered path-construction ops (text mode)
+    clip = None           # b'W' / b'W*' seen for the current path
+    in_text = False
+    used = {}
+
+    def note(tok):
+        cat = RES_OF_OP.get(tok)
+        if not cat or not stack:
+            return
+        operand = stack[-2] if tok == b'Tf' and len(stack) > 1 else stack[-1]
+        if operand.startswith(b'/'):
+            used.setdefault(cat, set()).add(operand[1:])
+
+    def flush(tok):
+        note(tok)
+        out.extend(b' '.join(stack + [tok]) + b'\n')
+
+    for kind, tok in tokenize_with_inline_images(data):
+        if kind == 'obj':
+            stack.append(tok)
+            continue
+        if kind == 'inline':
+            if mode == 'bg' and not in_text:
+                out.extend(tok + b'\n')
+            stack = []
+            continue
+
+        if tok == b'BT':
+            in_text = True
+            if mode == 'text':
+                flush(tok)
+            stack = []
+            continue
+        if tok == b'ET':
+            in_text = False
+            if mode == 'text':
+                flush(tok)
+            stack = []
+            continue
+
+        if mode == 'bg':
+            if not in_text:
+                note(tok)
+                out.extend(b' '.join(stack + [tok]) + b'\n')
+            stack = []
+            continue
+
+        # ---- text mode ----
+        if in_text:
+            flush(tok)
+            stack = []
+            continue
+        if tok in PATH_CONSTRUCT:
+            path.extend(b' '.join(stack + [tok]) + b'\n')
+            stack = []
+            continue
+        if tok in CLIP:
+            clip = tok
+            stack = []
+            continue
+        if tok in PATH_PAINT:
+            if clip:                       # keep the clip, drop the paint
+                out.extend(path)
+                out.extend(clip + b'\nn\n')
+            path, clip = bytearray(), None
+            stack = []
+            continue
+        if tok in DROP_IN_TEXT:
+            stack = []
+            continue
+        if tok == b'gs' and ghosts and stack:
+            # Chrome draws gradient text by filling a rectangle through a
+            # luminosity mask whose group contains the glyphs. The fill is
+            # backdrop, so the glyphs would leave the file with it and the
+            # headline would stop being searchable. Draw the ghost copy
+            # instead: the same glyphs in text rendering mode 3, which paints
+            # nothing. The mask itself never reaches the output.
+            ghost = ghosts.get(smask_group(pdf, res, stack[-1]))
+            if ghost:
+                out.extend(b'/' + ghost[0] + b' Do\n')
+                used.setdefault(b'XObject', set()).add(ghost[0])
+                stack = []
+                continue
+        if tok == b'Do':
+            if stack:
+                sub = xm.get(stack[-1].lstrip(b'/'))
+                if sub is not None and sub in textforms:
+                    flush(tok)
+            stack = []
+            continue
+        flush(tok)                         # q Q cm gs colour, text state, marks
+        stack = []
+    if mode == 'text':
+        # `used` stays as walked, not as reduced. A dropped scope can be the
+        # only reference to a soft-mask group whose content is glyphs, and
+        # Chrome renders gradient text that way. Pruning the resource entry
+        # would delete those glyphs from the file and change the text layer.
+        # The entry is never invoked, so nothing composites it.
+        return drop_empty_scopes(bytes(out)), used
+    return bytes(out), used
+
+
+def drop_empty_scopes(data):
+    """Remove balanced q..Q scopes that draw no text.
+
+    The text pass keeps graphics state so the surviving glyphs paint exactly
+    as they did. That also keeps whole scopes whose only painting was artwork
+    the pass dropped. Such a scope draws nothing, because Q restores the state
+    it set, but it still installs a soft mask on the drawing path, and a soft
+    mask is the compositing this tool exists to remove.
+
+    Unbalanced q or Q is left alone: some streams open a scope on purpose and
+    never close it.
+    """
+    root = bytearray()
+    stack = [[root, True]]          # [buffer, shows text]
+    pending = []
+    for kind, tok in tokenize_with_inline_images(data):
+        if kind == 'obj':
+            pending.append(tok)
+            continue
+        if kind == 'inline':
+            stack[-1][0].extend(tok + b'\n')
+            stack[-1][1] = True
+            pending = []
+            continue
+        if tok == b'q':
+            stack.append([bytearray(), False])
+            pending = []
+            continue
+        if tok == b'Q' and len(stack) > 1:
+            buf, shows = stack.pop()
+            if shows:
+                stack[-1][0].extend(b'q\n' + buf + b'Q\n')
+                stack[-1][1] = True
+            pending = []
+            continue
+        stack[-1][0].extend(b' '.join(pending + [tok]) + b'\n')
+        if tok in TEXT_SHOW or tok == b'Do':
+            stack[-1][1] = True
+        pending = []
+    while len(stack) > 1:           # unclosed q: keep it open, as it was
+        buf, shows = stack.pop()
+        if shows:
+            stack[-1][0].extend(b'q\n' + buf)
+            stack[-1][1] = True
+    return bytes(root)
+
+
+def prune_resources(res_body, used):
+    """Drop every resource entry the filtered stream no longer names."""
+    if res_body is None:
+        return None
+    out = res_body
+    for cat in (b'XObject', b'ExtGState', b'Shading', b'Pattern', b'Font',
+                b'ColorSpace'):
+        m = re.search(rb'/' + cat + rb'\s*<<', out)
+        if not m:
+            continue
+        sub, end = dict_span(out, m.start() + len(cat) + 1)
+        keep = used.get(cat, set())
+        entries = []
+        for e in re.finditer(rb'/([^\s/<>\[\]]+)\s*(\d+\s+\d+\s+R|<<)', sub):
+            if e.group(1) in keep:
+                if e.group(2) == b'<<':
+                    inner, iend = dict_span(sub, e.end() - 2)
+                    entries.append(b'/' + e.group(1) + b' ' + inner)
+                else:
+                    entries.append(b'/' + e.group(1) + b' ' + e.group(2))
+        new = (b'/' + cat + b' << ' + b' '.join(entries) + b' >>') if entries else b''
+        out = out[:m.start()] + new + out[end:]
+    return out
+
+
+def strip_group(dict_bytes):
+    """Remove a form's transparency group; text-only forms never composite."""
+    m = re.search(rb'/Group\s*(<<|\d+\s+\d+\s+R)', dict_bytes)
+    if not m:
+        return dict_bytes
+    if m.group(1) == b'<<':
+        _, end = dict_span(dict_bytes, m.end() - 2)
+    else:
+        end = m.end()
+    return dict_bytes[:m.start()] + dict_bytes[end:]
+
+
+# ------------------------------------------------------------ file assembly --
+
+def deflate(b):
+    return zlib.compress(b, 9)
+
+
+def replace_stream(dict_bytes, payload):
+    d = re.sub(rb'/Filter\s*(/\w+|\[[^\]]*\])', b'', dict_bytes)
+    d = re.sub(rb'/DecodeParms\s*(<<.*?>>|\[[^\]]*\]|\d+\s+\d+\s+R)', b'', d, flags=re.S)
+    d = re.sub(rb'/Length\s+\d+(\s+\d+\s+R)?', b'', d)
+    d = d[:-2].rstrip() + b'\n/Filter/FlateDecode\n/Length ' \
+        + str(len(payload)).encode() + b'\n>>'
+    return d + b'\nstream\n' + payload + b'\nendstream'
+
+
+def reachable(pdf, extra_bodies, roots):
+    """Object numbers reachable from roots, scanning dicts only (never streams)."""
+    seen, todo = set(), list(roots)
+    while todo:
+        num = todo.pop()
+        if num in seen:
+            continue
+        seen.add(num)
+        body = extra_bodies.get(num)
+        if body is None:
+            d, _ = pdf.raw(num)
+            body = d
+        if not body:
+            continue
+        for m in re.finditer(rb'(\d+)\s+\d+\s+R', body):
+            n = int(m.group(1))
+            if n not in seen:
+                todo.append(n)
+    return seen
+
+
+def write_pdf(pdf, bodies, roots, dst, info_num=None):
+    """Emit a PDF containing only objects reachable from roots."""
+    keep = reachable(pdf, bodies, roots)
+    if info_num:
+        keep |= reachable(pdf, bodies, [info_num])
+    out = bytearray(b'%PDF-1.4\n%\xe2\xe3\xcf\xd3\n')
+    offsets = {}
+    for num in sorted(keep):
+        if num not in pdf.objs and num not in bodies:
+            continue
+        offsets[num] = len(out)
+        if num in bodies:
+            body = bodies[num]
+        else:
+            _, bs, be = pdf.objs[num]
+            body = pdf.data[bs:be - 6].strip()
+        out += str(num).encode() + b' 0 obj\n' + body + b'\nendobj\n'
+    root = re.search(rb'/Root\s+(\d+)\s+\d+\s+R', pdf.data).group(1)
+    xref_pos = len(out)
+    hi = max(offsets)
+    out += b'xref\n0 ' + str(hi + 1).encode() + b'\n0000000000 65535 f \n'
+    for i in range(1, hi + 1):
+        out += (b'%010d 00000 n \n' % offsets[i]) if i in offsets \
+            else b'0000000000 65535 f \n'
+    trailer = b'<< /Size ' + str(hi + 1).encode() + b' /Root ' + root + b' 0 R'
+    if info_num:
+        trailer += b' /Info ' + str(info_num).encode() + b' 0 R'
+    trailer += b' >>'
+    out += b'trailer\n' + trailer + b'\nstartxref\n' + str(xref_pos).encode() \
+        + b'\n%%EOF\n'
+    open(dst, 'wb').write(bytes(out))
+    return len(out)
+
+
+def page_media(pdf, num):
+    body = pdf.get(num)
+    m = re.search(rb'/MediaBox\s*\[([^\]]*)\]', body)
+    if not m:                                   # inherited from the Pages node
+        pref = re.search(rb'/Parent\s+(\d+)\s+\d+\s+R', body)
+        return page_media(pdf, int(pref.group(1))) if pref else (0, 0, 612, 792)
+    v = [float(x) for x in m.group(1).split()]
+    return tuple(v)
+
+
+def content_nums(pdf, page_num):
+    body = pdf.get(page_num)
+    m = re.search(rb'/Contents\s+(\d+)\s+\d+\s+R', body)
+    if m:
+        return [int(m.group(1))]
+    m = re.search(rb'/Contents\s*\[([^\]]*)\]', body)
+    if m:
+        return [int(x.group(1)) for x in re.finditer(rb'(\d+)\s+\d+\s+R', m.group(1))]
+    return []
+
+
+def page_content(pdf, page_num):
+    return b'\n'.join(filter(None, (pdf.stream_data(n)
+                                    for n in content_nums(pdf, page_num))))
+
+
+# -------------------------------------------------------------------- main --
+
+def build(src, dst, dpi, quality, keep_temp):
+    pdf = Pdf(src)
+    pages = pdf.pages()
+    textforms = forms_with_text(pdf, pages)
+    maskforms = softmask_forms(pdf)
+    forms = [n for n in pdf.objs
+             if (lambda d: d and re.search(rb'/Subtype\s*/Form', d))(pdf.raw(n)[0])]
+    print(f'{len(pages)} pages, {len(forms)} form xobjects '
+          f'({len(textforms)} contain text, {len(maskforms)} are mask groups)')
+
+    work = tempfile.mkdtemp(prefix='pdfhybrid-')
+    try:
+        # ---- pass 1: backdrop-only document, then rasterise it ----
+        bodies = {}
+        for num in forms:
+            if num in maskforms:      # mask geometry, not page text
+                continue
+            d, _ = pdf.raw(num)
+            data = pdf.stream_data(num)
+            if data is None:
+                continue
+            new, _u = filter_stream(pdf, data, form_resources(pdf, num),
+                                    'bg', textforms)
+            bodies[num] = replace_stream(d, deflate(new))
+        for pnum in pages:
+            cnums = content_nums(pdf, pnum)
+            if not cnums:
+                continue
+            res = resolve(pdf, pdf.get(pnum), b'Resources')
+            new, _u = filter_stream(pdf, page_content(pdf, pnum), res,
+                                    'bg', textforms)
+            d, _ = pdf.raw(cnums[0])
+            bodies[cnums[0]] = replace_stream(d, deflate(new))
+            for extra in cnums[1:]:
+                de, _ = pdf.raw(extra)
+                bodies[extra] = replace_stream(de, deflate(b''))
+        bg_pdf = os.path.join(work, 'bg.pdf')
+        root = int(re.search(rb'/Root\s+(\d+)\s+\d+\s+R', pdf.data).group(1))
+        write_pdf(pdf, bodies, [root], bg_pdf)
+
+        subprocess.run(['pdftoppm', '-r', str(dpi), '-png',
+                        bg_pdf, os.path.join(work, 'bg')], check=True)
+        pngs = sorted(f for f in os.listdir(work) if f.endswith('.png'))
+        if len(pngs) != len(pages):
+            raise SystemExit(f'backdrop render produced {len(pngs)} of {len(pages)} pages')
+
+        # ---- pass 2: text-only content over the backdrop ----
+        bodies = {}
+        next_num = max(pdf.objs) + 1
+
+        # A mask group that contains glyphs is gradient text. Its fill leaves
+        # with the backdrop, so keep a text-only copy to draw invisibly in the
+        # fill's place and the headline stays searchable.
+        ghosts = {}
+        for num in sorted(maskforms & textforms):
+            d, _ = pdf.raw(num)
+            data = pdf.stream_data(num)
+            if data is None:
+                continue
+            body, _u = filter_stream(pdf, data, form_resources(pdf, num),
+                                     'text', textforms)
+            if not body.strip():
+                continue
+            ghosts[num] = (b'ZgGhost%d' % num, next_num)
+            bodies[next_num] = replace_stream(strip_group(d),
+                                              deflate(b'3 Tr\n' + body))
+            next_num += 1
+        if ghosts:
+            print(f'{len(ghosts)} gradient-text masks kept as invisible text')
+
+        for num in forms:
+            if num in maskforms:
+                continue
+            d, _ = pdf.raw(num)
+            data = pdf.stream_data(num)
+            if data is None:
+                continue
+            new, used = filter_stream(pdf, data, form_resources(pdf, num),
+                                      'text', textforms, ghosts)
+            d = strip_group(d)
+            entry = ghost_entry(used, ghosts)
+            rm = re.search(rb'/Resources\s+(\d+)\s+\d+\s+R', d)
+            if rm:
+                rnum = int(rm.group(1))
+                rbody = prune_resources(pdf.get(rnum), used)
+                bodies[rnum] = inject_xobject(rbody, entry) if entry else rbody
+            else:
+                rm = re.search(rb'/Resources\s*<<', d)
+                if rm:
+                    rd, rend = dict_span(d, rm.start() + 10)
+                    rbody = prune_resources(rd, used)
+                    if entry:
+                        rbody = inject_xobject(rbody, entry)
+                    d = d[:rm.start()] + b'/Resources ' + rbody + d[rend:]
+                elif entry:
+                    d = d[:-2].rstrip() + b'\n/Resources << /XObject << ' \
+                        + entry + b' >> >>\n>>'
+            bodies[num] = replace_stream(d, deflate(new))
+        total_jpeg = 0
+        for i, pnum in enumerate(pages):
+            x0, y0, x1, y1 = page_media(pdf, pnum)
+            w_pt, h_pt = x1 - x0, y1 - y0
+            im = Image.open(os.path.join(work, pngs[i])).convert('RGB')
+            buf = io.BytesIO()
+            im.save(buf, 'JPEG', quality=quality, optimize=True,
+                    progressive=False, subsampling=0)
+            jpg = buf.getvalue()
+            total_jpeg += len(jpg)
+
+            img_num = next_num
+            next_num += 1
+            bodies[img_num] = (
+                b'<< /Type /XObject /Subtype /Image /Width ' + str(im.size[0]).encode()
+                + b' /Height ' + str(im.size[1]).encode()
+                + b' /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode'
+                  b' /Length ' + str(len(jpg)).encode() + b' >>\nstream\n'
+                + jpg + b'\nendstream')
+
+            res = resolve(pdf, pdf.get(pnum), b'Resources')
+            text, used = filter_stream(pdf, page_content(pdf, pnum), res,
+                                       'text', textforms, ghosts)
+            content = (f'q {w_pt:.4f} 0 0 {h_pt:.4f} {x0:.4f} {y0:.4f} cm '
+                       f'/ZgBackdrop Do Q\n').encode() + text
+            cnums = content_nums(pdf, pnum)
+            d, _ = pdf.raw(cnums[0])
+            bodies[cnums[0]] = replace_stream(d, deflate(content))
+            for extra in cnums[1:]:
+                de, _ = pdf.raw(extra)
+                bodies[extra] = replace_stream(de, deflate(b''))
+
+            # prune the page's resources, then attach the backdrop
+            pbody = pdf.get(pnum)
+            entry = b'/ZgBackdrop ' + str(img_num).encode() + b' 0 R'
+            gentry = ghost_entry(used, ghosts)
+            if gentry:
+                entry += b' ' + gentry
+            rm = re.search(rb'/Resources\s+(\d+)\s+\d+\s+R', pbody)
+            if rm:
+                rnum = int(rm.group(1))
+                rbody = prune_resources(bodies.get(rnum) or pdf.get(rnum), used)
+                bodies[rnum] = inject_xobject(rbody, entry)
+            else:
+                rm = re.search(rb'/Resources\s*<<', pbody)
+                rd, rend = dict_span(pbody, rm.start() + 10)
+                bodies[pnum] = (pbody[:rm.start()] + b'/Resources '
+                                + inject_xobject(prune_resources(rd, used), entry)
+                                + pbody[rend:])
+
+        info = re.search(rb'/Info\s+(\d+)\s+\d+\s+R', pdf.data)
+        size = write_pdf(pdf, bodies, [root],
+                         dst, int(info.group(1)) if info else None)
+        print(f'backdrops: {len(pages)} at {dpi} dpi, '
+              f'{total_jpeg / 1e6:.1f} MB of JPEG')
+        print(f'file: {os.path.getsize(src) / 1e6:.1f} MB -> {size / 1e6:.1f} MB')
+    finally:
+        if keep_temp:
+            print(f'temp files: {work}')
+        else:
+            shutil.rmtree(work, ignore_errors=True)
+
+
+def ghost_entry(used, ghosts):
+    """XObject entries for the ghost text forms a stream ended up naming."""
+    names = used.get(b'XObject', set())
+    return b' '.join(b'/' + n + b' ' + str(num).encode() + b' 0 R'
+                     for n, num in ghosts.values() if n in names)
+
+
+def inject_xobject(res_body, entry):
+    """Add an /XObject entry to a resource dictionary."""
+    m = re.search(rb'/XObject\s*<<', res_body)
+    if m:
+        return res_body[:m.end()] + b' ' + entry + res_body[m.end():]
+    m = re.search(rb'/XObject\s+(\d+)\s+\d+\s+R', res_body)
+    if m:                    # indirect XObject dict: inline a merged one instead
+        raise SystemExit('indirect /XObject resource dictionary is not handled')
+    return res_body[:-2].rstrip() + b'\n/XObject << ' + entry + b' >>\n>>'
+
+
+# Rasterising a page and re-encoding it as JPEG changes almost every pixel a
+# little, and edge pixels a lot, so a plain image diff cannot tell a good
+# flatten from a broken one. What separates them is WHERE the change lands.
+# Re-encoding noise sits on edges. Artwork that used to cover text, and no
+# longer does, puts new marks in the middle of an area the original drew flat.
+# So the check counts only changed pixels whose neighbourhood in the original
+# is featureless. A good flatten scores zero on that. A page whose covered
+# text is now on show scores thousandths.
+FLAT_WINDOW = 5          # neighbourhood, in pixels, that must be featureless
+FLAT_RANGE = 8           # spread, of 255, still counted as featureless
+CHANGE_LEVEL = 96        # per-pixel move, of 255, counted as a new mark
+CHANGE_SHARE = 0.0002    # share of a page allowed to carry new marks
+
+
+def flat_area_change(src, dst, dpi=100):
+    """Worst page's share of new marks inside areas the original drew flat."""
+    work = tempfile.mkdtemp(prefix='pdfdiff-')
+    try:
+        for tag, path in (('a', src), ('b', dst)):
+            subprocess.run(['pdftoppm', '-r', str(dpi), '-png', '-gray',
+                            path, os.path.join(work, tag)], check=True)
+        names = lambda t: sorted(f for f in os.listdir(work) if f.startswith(t + '-'))
+        worst, worst_page = 0.0, 0
+        for i, (fa, fb) in enumerate(zip(names('a'), names('b')), 1):
+            a = Image.open(os.path.join(work, fa)).convert('L')
+            b = Image.open(os.path.join(work, fb)).convert('L')
+            if a.size != b.size:
+                b = b.resize(a.size)
+            flat = ImageChops.difference(
+                a.filter(ImageFilter.MaxFilter(FLAT_WINDOW)),
+                a.filter(ImageFilter.MinFilter(FLAT_WINDOW))
+            ).point(lambda v: 255 if v < FLAT_RANGE else 0)
+            changed = ImageChops.difference(a, b).point(
+                lambda v: 255 if v > CHANGE_LEVEL else 0)
+            hist = ImageChops.multiply(flat, changed).histogram()
+            share = hist[255] / sum(hist)
+            if share > worst:
+                worst, worst_page = share, i
+        return worst, worst_page
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+
+
+def verify(src, dst, dpi):
+    ok = True
+    a = subprocess.run(['pdfinfo', src], capture_output=True, text=True).stdout
+    b = subprocess.run(['pdfinfo', dst], capture_output=True, text=True)
+    if b.returncode != 0:
+        print('  FAIL: output does not parse')
+        return False
+    pa = int(re.search(r'Pages:\s+(\d+)', a).group(1))
+    pb = int(re.search(r'Pages:\s+(\d+)', b.stdout).group(1))
+    print(f'  pages: {pb}' + ('' if pa == pb else f'   FAIL: was {pa}'))
+    ok &= pa == pb
+
+    ta = subprocess.run(['pdftotext', src, '-'], capture_output=True).stdout
+    tb = subprocess.run(['pdftotext', dst, '-'], capture_output=True).stdout
+    same = ta == tb
+    print(f'  text layer: {"identical" if same else "DIFFERS"}')
+    ok &= same
+
+    lst = subprocess.run(['pdfimages', '-list', dst],
+                         capture_output=True, text=True).stdout
+    rows = [r.split() for r in lst.splitlines()[2:] if r.strip() and len(r.split()) >= 14]
+    per_page = {}
+    for r in rows:
+        per_page[int(r[0])] = per_page.get(int(r[0]), 0) + 1
+    bad = [p for p, c in per_page.items() if c != 1]
+    print(f'  images per page: {"1 (flat)" if not bad else f"FAIL {bad}"}')
+    ok &= not bad
+    worst = max((int(r[3]) * int(r[4]) * int(r[6]) for r in rows), default=0)
+    print(f'  worst page decodes to {worst / 1e6:.1f} MB')
+
+    # What matters is what a viewer actually executes, not what the file
+    # contains: orphaned mask dictionaries left in resource entries are never
+    # invoked, so count only the compositing reachable from page content.
+    sm, grp = compositing_on_drawing_path(dst)
+    print(f'  soft masks on the drawing path: {sm}')
+    print(f'  transparency groups drawn:      {grp}')
+    ok &= sm == 0 and grp == 0
+
+    share, page = flat_area_change(src, dst)
+    where = f' (page {page})' if share else ''
+    print(f'  new marks on flat areas: {share * 100:.4f}%{where}'
+          + ('' if share <= CHANGE_SHARE else
+             f'   FAIL: over {CHANGE_SHARE * 100:.4f}%'))
+    ok &= share <= CHANGE_SHARE
+    return ok
+
+
+def compositing_on_drawing_path(path):
+    pdf = Pdf(path)
+    smask = groups = 0
+    seen = set()
+
+    def egs_dict(eg, name):
+        if not eg:
+            return None
+        m = re.search(rb'/' + re.escape(name) + rb'\s+(\d+)\s+\d+\s+R', eg)
+        if m:
+            return pdf.raw(int(m.group(1)))[0]
+        m = re.search(rb'/' + re.escape(name) + rb'\s*<<', eg)
+        return dict_span(eg, m.start() + len(name) + 1)[0] if m else None
+
+    def walk(stream, res, depth=0):
+        nonlocal smask, groups
+        if stream is None or depth > 12:
+            return
+        xm = xobj_map(pdf, res)
+        eg = resolve(pdf, res, b'ExtGState')
+        stack = []
+        for kind, tok in tokenize_with_inline_images(stream):
+            if kind == 'obj':
+                stack.append(tok)
+                continue
+            if kind == 'inline':
+                stack = []
+                continue
+            if tok == b'gs' and stack:
+                d = egs_dict(eg, stack[-1].lstrip(b'/'))
+                if d and re.search(rb'/SMask\s*(<<|\d+\s+\d+\s+R)', d):
+                    smask += 1
+            elif tok == b'Do' and stack:
+                n = xm.get(stack[-1].lstrip(b'/'))
+                if n is not None and n not in seen:
+                    d, _ = pdf.raw(n)
+                    if d and re.search(rb'/Subtype\s*/Form', d):
+                        seen.add(n)
+                        if re.search(rb'/Group\s*(<<|\d+\s+\d+\s+R)', d):
+                            groups += 1
+                        walk(pdf.stream_data(n), form_resources(pdf, n), depth + 1)
+            stack = []
+
+    for pg in pdf.pages():
+        walk(page_content(pdf, pg), resolve(pdf, pdf.get(pg), b'Resources'))
+    return smask, groups
+
+
+if __name__ == '__main__':
+    import argparse
+    ap = argparse.ArgumentParser(description=__doc__.split('\n')[0])
+    ap.add_argument('input')
+    ap.add_argument('output', nargs='?')
+    ap.add_argument('--dpi', type=int, default=300)
+    ap.add_argument('--quality', type=int, default=90)
+    ap.add_argument('--keep-temp', action='store_true')
+    ap.add_argument('--force', action='store_true',
+                    help='keep the output under its normal name even when '
+                         'verification fails')
+    a = ap.parse_args()
+    out = a.output or re.sub(r'\.pdf$', '', a.input, flags=re.I) + '-hybrid.pdf'
+    build(a.input, out, a.dpi, a.quality, a.keep_temp)
+    print('verifying:')
+    if verify(a.input, out, a.dpi):
+        sys.exit(0)
+
+    # A failed verification means the page no longer renders like the original.
+    # The usual cause is artwork drawn ABOVE text — a redaction box, a stamp, a
+    # watermark — which this tool replays underneath, so the covered text
+    # becomes visible. Readers act on the file, not on stderr or on $?, so a
+    # failed output must not keep a name that reads as success.
+    if a.force:
+        print(f'\n  --force: keeping unverified output at {out}')
+        sys.exit(1)
+    rejected = out + '.rejected'
+    os.replace(out, rejected)
+    print(f'\n  verification FAILED - output quarantined at {rejected}')
+    print('  Examine it before you use it. To keep the normal name, use --force.')
+    sys.exit(1)
