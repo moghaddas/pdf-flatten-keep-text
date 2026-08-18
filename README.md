@@ -195,7 +195,9 @@ either sample in a text editor and read the operators.
   one raises rather than guessing.
 - The backdrop is rendered by poppler, so a page poppler renders wrong flattens
   wrong. The verifier compares against poppler too and will not catch that.
-- Encrypted files are not handled. Decrypt first with `qpdf --decrypt`.
+- Encrypted files are not handled. The streams do not decode and the output
+  comes out wrong, though verification does reject it. The sample encrypted
+  with qpdf scores 70.98%. Decrypt first with `qpdf --decrypt`.
 - The text pass keeps clipping paths but drops the paint that used them, so a
   page that clips text with a painted shape is worth checking by eye.
 
