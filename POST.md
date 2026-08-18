@@ -83,9 +83,11 @@ gs -sDEVICE=pdfwrite -dFILTERIMAGE -dFILTERVECTOR -o textonly.pdf in.pdf
 qpdf backdrop.pdf --overlay textonly.pdf -- out.pdf
 ```
 
-It works better than I expected. The text renders, and `pdftotext` gets all 397
-words out of the sample, the same as the purpose-built tool. If you only wanted
-a text layer over a picture, that is a fine way to get one.
+It works better than I expected. On the generated sample the text renders, and
+`pdftotext` gets all 397 words out, the same as the purpose-built tool. On real
+exports it is less kind: I have watched the overlay lose text off the page while
+every word still extracts, which is the worst way for a conversion to fail,
+because nothing you can grep tells you it happened.
 
 It just does not fix the bug. The text-only layer keeps the original graphics
 state, soft masks and transparency groups included, and the overlay puts every

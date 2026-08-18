@@ -135,10 +135,16 @@ gs -sDEVICE=pdfwrite -dFILTERIMAGE -dFILTERVECTOR -o textonly.pdf in.pdf
 qpdf backdrop.pdf --overlay textonly.pdf -- out.pdf
 ```
 
-It produces a file. The text is there, it renders, and it extracts. It just does
-not fix the bug, because the text-only layer carries the original graphics state
-with it, soft masks and transparency groups included, and the overlay puts all of
-that straight back on the page.
+It produces a file. On the sample the text is there, it renders, and it extracts.
+It just does not fix the bug, because the text-only layer carries the original
+graphics state with it, soft masks and transparency groups included, and the
+overlay puts all of that straight back on the page.
+
+On real Chrome exports I have also watched the overlay drop text off the page
+while `pdftotext` still returns every word, which is the worst way for a
+conversion to fail. The generated sample does not reproduce that, so read the
+table as the smallest gap between the two, not the usual one. Check your own
+file before you trust either.
 
 Measured on `sample-deck.pdf`, on this machine, with `python3 bench.py`:
 
