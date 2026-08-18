@@ -120,9 +120,9 @@ output moves to `NAME.rejected` and the exit code is 1. A rejected file is still
 there to look at, it just cannot be mistaken for a good one. With `--force` the
 name survives and the exit code is still 1.
 
-The soft-mask and group counts only follow what page content actually executes.
-An unused mask dictionary sitting in a resource entry is never composited, so
-counting it would report work no viewer does.
+The soft-mask and group counts follow what page content executes, not what the
+file contains. An unused mask dictionary sitting in a resource entry is never
+composited, so counting it would report work no viewer does.
 
 ## Why not the ghostscript pipeline
 

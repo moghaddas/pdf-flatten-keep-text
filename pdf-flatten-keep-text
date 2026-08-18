@@ -835,8 +835,8 @@ if __name__ == '__main__':
         sys.exit(0)
 
     # A failed verification means the page no longer renders like the original.
-    # The usual cause is artwork drawn ABOVE text — a redaction box, a stamp, a
-    # watermark — which this tool replays underneath, so the covered text
+    # The usual cause is artwork drawn ABOVE text: a redaction box, a stamp or
+    # a watermark, which this tool replays underneath, so the covered text
     # becomes visible. Readers act on the file, not on stderr or on $?, so a
     # failed output must not keep a name that reads as success.
     if a.force:
