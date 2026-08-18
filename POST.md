@@ -1,4 +1,4 @@
-# Why your Chrome PDF renders black in Preview
+# Why your Chrome deck renders black in Preview
 
 A deck exported from Chrome opens black in macOS Preview. Same file, same page,
 fine in Chrome, fine in Acrobat, black in Preview. The usual advice is to
@@ -44,7 +44,7 @@ BT /F1 13 Tf 0.1 0.11 0.16 rg 1 0 0 1 74 164 Tm (Pipeline) Tj ... ET
 That is the whole idea. One image per page, zero transparency groups, and the
 glyphs are still glyphs, so they stay sharp at 800% zoom.
 
-## The two things that make it hard
+## Gradient headlines and dead scopes
 
 **Gradient headlines are not text.** Chrome renders them by filling a rectangle
 through a soft mask whose group contains the glyphs. Strip text from that group

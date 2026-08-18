@@ -1,8 +1,15 @@
 # pdf-flatten-keep-text
 
-Chrome print-to-PDF files render black or blank in macOS Preview. This flattens
-the artwork to one opaque image per page and replays the text over it, so the
-page still selects, searches and copies.
+A deck exported from Chrome opens black in macOS Preview. Chrome builds those
+pages from stacked transparency groups and luminosity soft masks, and Preview
+gives up compositing them. You get a black page, a blank one, or one that
+appears only after you scroll away and back.
+
+Plain Chrome printouts are fine. Gradients, shadows and masked artwork are what
+trigger it.
+
+This flattens the artwork to one opaque image per page and replays the text over
+it, so the page still selects, searches and copies.
 
 ```
 python3 pdf-flatten-keep-text deck.pdf
