@@ -38,7 +38,7 @@ along with the graphics state, transforms and clipping paths they depend on.
 Then write a page that draws the JPEG and replays the text over it.
 
 ```
-q 960 0 0 540 0 0 cm /ZgBackdrop Do Q
+q 960 0 0 540 0 0 cm /FlatBackdrop Do Q
 BT /F1 13 Tf 0.1 0.11 0.16 rg 1 0 0 1 74 164 Tm (Pipeline) Tj ... ET
 ```
 

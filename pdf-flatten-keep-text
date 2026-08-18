@@ -562,7 +562,7 @@ def build(src, dst, dpi, quality, keep_temp):
                                      'text', textforms)
             if not body.strip():
                 continue
-            ghosts[num] = (b'ZgGhost%d' % num, next_num)
+            ghosts[num] = (b'FlatGhost%d' % num, next_num)
             bodies[next_num] = replace_stream(strip_group(d),
                                               deflate(b'3 Tr\n' + body))
             next_num += 1
@@ -621,7 +621,7 @@ def build(src, dst, dpi, quality, keep_temp):
             text, used = filter_stream(pdf, page_content(pdf, pnum), res,
                                        'text', textforms, ghosts)
             content = (f'q {w_pt:.4f} 0 0 {h_pt:.4f} {x0:.4f} {y0:.4f} cm '
-                       f'/ZgBackdrop Do Q\n').encode() + text
+                       f'/FlatBackdrop Do Q\n').encode() + text
             cnums = content_nums(pdf, pnum)
             d, _ = pdf.raw(cnums[0])
             bodies[cnums[0]] = replace_stream(d, deflate(content))
@@ -631,7 +631,7 @@ def build(src, dst, dpi, quality, keep_temp):
 
             # prune the page's resources, then attach the backdrop
             pbody = pdf.get(pnum)
-            entry = b'/ZgBackdrop ' + str(img_num).encode() + b' 0 R'
+            entry = b'/FlatBackdrop ' + str(img_num).encode() + b' 0 R'
             gentry = ghost_entry(used, ghosts)
             if gentry:
                 entry += b' ' + gentry
