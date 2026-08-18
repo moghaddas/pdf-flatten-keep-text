@@ -163,8 +163,8 @@ Input: 0.07 MB, 3 pages, 397 words.
 
 The sample grows from 0.07 MB to 1.00 MB because its artwork is pure vector, and
 a 300 dpi JPEG of a gradient costs more bytes than the gradient. Exports that
-carry photographs go the other way, and `--dpi 150` halves the backdrop when the
-file matters more than the zoom.
+carry photographs go the other way. `--dpi 150` takes the same sample to 0.40 MB
+if the file size matters more than the zoom.
 
 ## The companion tool
 
