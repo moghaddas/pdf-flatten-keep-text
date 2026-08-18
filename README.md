@@ -1,8 +1,8 @@
 # pdf-flatten-keep-text
 
 Chrome print-to-PDF files render black or blank in macOS Preview. This flattens
-the artwork to one opaque image per page and replays the text on top as real
-text, so the page still selects, searches and copies.
+the artwork to one opaque image per page and replays the text over it, so the
+page still selects, searches and copies.
 
 ```
 python3 pdf-flatten-keep-text deck.pdf
@@ -17,13 +17,13 @@ idea, and it is wrong for any page where artwork was drawn **over** text:
 - stamps and watermarks
 - highlight and sticker overlays
 
-On those pages the covered text is replayed above the thing that covered it, and
-becomes readable. The text was always in the file, so nothing new leaks into the
-bytes, but a page that looked safe now shows what it hid.
+On those pages the hidden text is replayed above whatever covered it, and
+becomes readable. Nothing new enters the bytes, the words were always in the
+file, but a page that looked safe now shows what it hid.
 
 The verifier catches this and refuses to hand you the file. It renders both
-documents and counts new marks that land in areas the original drew flat. Cover
-a line of text, and those marks are the line coming back:
+documents and counts new marks landing where the original drew flat. Cover a
+line of text, and those marks are the line coming back:
 
 ```
 $ python3 pdf-flatten-keep-text sample-redacted.pdf
@@ -31,13 +31,13 @@ $ python3 pdf-flatten-keep-text sample-redacted.pdf
   verification FAILED - output quarantined at sample-redacted-hybrid.pdf.rejected
 ```
 
-Treat that as a stop sign, not a threshold to tune. `--force` exists for the case
-where you have looked at the rejected file and know why it differs.
+Treat that as a stop sign, not a threshold to tune. `--force` exists for when you
+have looked at the rejected file and know why it differs.
 
 ## The bug
 
 A Skia print-to-PDF export builds every page out of transparency groups, soft
-masks and shading-filled forms, nested several deep. Nothing on the page is a
+masks and shading-filled forms, nested several deep. Nothing in there is a
 plain painted object. A viewer has to composite the whole stack on every repaint,
 and macOS Preview gives up: black pages, blank pages, or pages that appear only
 after you scroll past them and back.
@@ -58,26 +58,24 @@ $ python3 pdf-flatten-keep-text sample-deck.pdf
 
 The tool splits each content stream in two.
 
-**The backdrop.** Everything that is not a text block gets rendered to one
-opaque JPEG per page. One image, no alpha, no groups, no masks. A viewer walks a
+**The backdrop.** Everything that is not a text block renders to one opaque
+JPEG per page. One image, no alpha, no groups, no masks. A viewer walks a
 single sequential scan.
 
 **The text.** Every `BT..ET` block is replayed over that image with its original
-font, colour, transform and clipping path intact. Real text, not an OCR guess.
-It stays selectable and it stays sharp at any zoom, because it is still text.
-
-Two details carry most of the work.
+font, colour, transform and clipping path intact. Real glyphs, not an OCR guess,
+so they stay selectable and sharp at any zoom.
 
 Gradient headlines are not text. Chrome draws them by filling a rectangle
 through a luminosity mask whose group contains the glyphs. The fill belongs to
-the backdrop, so the glyphs would leave with it and the headline would stop being
-searchable. The tool keeps a copy of those glyphs in text rendering mode 3, which
-paints nothing, and draws it where the fill used to be.
+the backdrop, so they would leave with it and the headline would stop being
+searchable. The tool keeps a copy in text rendering mode 3, which paints
+nothing, and draws it where the fill used to be.
 
-Scopes that no longer draw anything get removed. Keeping graphics state also
-keeps `q /GsN gs Q` blocks whose only painting was artwork the text pass dropped.
-They draw nothing, and they still install a soft mask, which is the exact thing
-this tool exists to remove.
+Scopes that no longer draw anything come out. Keeping graphics state also keeps
+`q /GsN gs Q` blocks whose only painting was artwork the text pass dropped. They
+paint nothing and still install a soft mask, the exact thing this tool exists to
+delete.
 
 ## What you need
 
@@ -115,19 +113,19 @@ verifying:
   new marks on flat areas: 0.0000%
 ```
 
-Pass, and you get exit 0 and the file under the name you asked for. Fail, and the
-output moves to `NAME.rejected` and the exit code is 1. A rejected file is still
-there to look at, it just cannot be mistaken for a good one. With `--force` the
-name survives and the exit code is still 1.
+Pass, and you get exit 0 and the file under the name you asked for. Fail, and
+the output moves to `NAME.rejected` with exit 1. A rejected file is still there
+to look at, but cannot be mistaken for a good one. `--force` keeps the name. The
+exit code is still 1.
 
 The soft-mask and group counts follow what page content executes, not what the
-file contains. An unused mask dictionary sitting in a resource entry is never
+file contains. An unused mask dictionary in a resource entry is never
 composited, so counting it would report work no viewer does.
 
 ## Why not the ghostscript pipeline
 
-This is the first thing people suggest, and it is a reasonable idea. Rasterise
-the page without text, extract the text on its own, put one over the other:
+This is the first thing people suggest, and it is reasonable. Rasterise the page
+without text, extract the text on its own, put one over the other:
 
 ```
 gs -sDEVICE=pdfimage24 -r300 -dFILTERTEXT -o backdrop.pdf in.pdf
@@ -136,15 +134,15 @@ qpdf backdrop.pdf --overlay textonly.pdf -- out.pdf
 ```
 
 It produces a file. On the sample the text is there, it renders, and it extracts.
-It just does not fix the bug, because the text-only layer carries the original
-graphics state with it, soft masks and transparency groups included, and the
-overlay puts all of that straight back on the page.
+It does not fix the bug: the text-only layer carries the original graphics state,
+soft masks and transparency groups included, and the overlay puts all of it back
+on the page.
 
 On real Chrome exports I have also watched the overlay drop text off the page
-while `pdftotext` still returns every word, which is the worst way for a
-conversion to fail. The generated sample does not reproduce that, so read the
-table as the smallest gap between the two, not the usual one. Check your own
-file before you trust either.
+while `pdftotext` still returns every word, the worst way for a conversion to
+fail. The generated sample does not reproduce that, so read the table as the
+smallest gap between the two, not the usual one. Check your own file before you
+trust either.
 
 Measured on `sample-deck.pdf`, on this machine, with `python3 bench.py`:
 
@@ -170,14 +168,14 @@ Input: 0.07 MB, 3 pages, 397 words.
 The sample grows from 0.07 MB to 1.00 MB because its artwork is pure vector, and
 a 300 dpi JPEG of a gradient costs more bytes than the gradient. Exports that
 carry photographs go the other way. `--dpi 150` takes the same sample to 0.40 MB
-if the file size matters more than the zoom.
+if file size matters more than zoom.
 
 ## The companion tool
 
 `pdf-flatten-to-jpeg` rasterises everything, text included, and rebuilds the
-document from the images. No fonts, no text layer, nothing to select. Use it when
-the page must render and you do not care about the text, or when
-`pdf-flatten-keep-text` rejects the file and you need something today.
+document from the images. No fonts, no layer to select. Use it when the page must
+render and nobody needs to copy from it, or when `pdf-flatten-keep-text` rejects
+the file and you need something today.
 
 ```
 python3 pdf-flatten-to-jpeg deck.pdf

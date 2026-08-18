@@ -9,7 +9,7 @@ Removing the compositing does.
 
 The content stream is split in two. Everything that is not a text block is
 rasterised to a single opaque JPEG that becomes the page backdrop. The text
-blocks are replayed on top as real text, with their original fonts, graphics
+blocks are replayed on top as real glyphs, with their original fonts, graphics
 state and clipping paths intact. The result has one image per page and no
 transparency groups, yet stays selectable, searchable and copyable, and its
 glyphs still scale to any zoom.
@@ -681,11 +681,11 @@ def inject_xobject(res_body, entry):
 # Rasterising a page and re-encoding it as JPEG changes almost every pixel a
 # little, and edge pixels a lot, so a plain image diff cannot tell a good
 # flatten from a broken one. What separates them is WHERE the change lands.
-# Re-encoding noise sits on edges. Artwork that used to cover text, and no
-# longer does, puts new marks in the middle of an area the original drew flat.
-# So the check counts only changed pixels whose neighbourhood in the original
-# is featureless. A good flatten scores zero on that. A page whose covered
-# text is now on show scores thousandths.
+# That noise sits on edges. Artwork that used to cover text, and no longer
+# does, puts new marks in the middle of an area the original drew flat. So the
+# check counts only changed pixels whose neighbourhood in the original is
+# featureless. A good flatten scores zero on that. A page whose covered text is
+# now on show scores thousandths.
 FLAT_WINDOW = 5          # neighbourhood, in pixels, that must be featureless
 FLAT_RANGE = 8           # spread, of 255, still counted as featureless
 CHANGE_LEVEL = 96        # per-pixel move, of 255, counted as a new mark
@@ -751,7 +751,7 @@ def verify(src, dst, dpi):
     worst = max((int(r[3]) * int(r[4]) * int(r[6]) for r in rows), default=0)
     print(f'  worst page decodes to {worst / 1e6:.1f} MB')
 
-    # What matters is what a viewer actually executes, not what the file
+    # What matters is what a viewer executes, not what the file
     # contains: orphaned mask dictionaries left in resource entries are never
     # invoked, so count only the compositing reachable from page content.
     sm, grp = compositing_on_drawing_path(dst)

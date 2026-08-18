@@ -5,12 +5,12 @@ fine in Chrome, fine in Acrobat, black in Preview. The usual advice is to
 re-encode the images. That does nothing, because the images were never the
 problem.
 
-## What is actually in the file
+## What is in the file
 
 Open the page content stream of a Skia print-to-PDF export and there are almost
 no painted objects. Everything is a form xobject with its own transparency
 group, most of them drawn through a luminosity soft mask, and the masks are
-themselves groups that draw axial shadings. Three pages of a small sample come
+themselves groups that paint axial shadings. Three pages of a small sample come
 out as 120 form xobjects, 42 of them mask groups.
 
 Every one of those has to be composited into an offscreen buffer and blended
@@ -18,12 +18,11 @@ back, in order, on every repaint. Chrome wrote it, so Chrome is happy to draw
 it. Preview walks the same tree and runs out of patience. You get a black page,
 a blank page, or a page that shows up only after you scroll away and back.
 
-So the fix is not to shrink the file. The fix is to delete the compositing.
+The fix is not to shrink the file. It is to delete the compositing.
 
 ## Rasterise the art, keep the text
 
-The trick is that a slide deck has exactly two kinds of content, and they need
-opposite treatment.
+A slide deck has two kinds of content, and they need opposite treatment.
 
 The artwork is where all the compositing lives, and nobody selects a gradient.
 Render it. One opaque JPEG per page, no alpha, no groups, no masks. A viewer
@@ -32,7 +31,7 @@ walks a single sequential scan, which is the cheapest thing a PDF page can be.
 The text is the part people select, search and copy, and it composites nothing.
 Keep it as text.
 
-So split the content stream. Filter one copy to drop every `BT..ET` block and
+Split the content stream. Filter one copy to drop every `BT..ET` block and
 render that to the backdrop. Filter a second copy to keep only the text blocks
 along with the graphics state, transforms and clipping paths they depend on.
 Then write a page that draws the JPEG and replays the text over it.
@@ -55,12 +54,12 @@ glyphs leave the file with the fill. Search for your own slide title and get
 nothing.
 
 The fix is to keep a copy of those glyphs in text rendering mode 3, which paints
-nothing at all, and draw it where the fill used to be. The headline is a picture
-you can still search.
+nothing, and draw it where the fill used to be. The headline is a picture you can
+still search.
 
 **Scopes that draw nothing still cost you.** The text pass keeps graphics state
-so the surviving glyphs paint the way they did. It therefore also keeps blocks
-like this, whose only painting was artwork the pass dropped:
+so the surviving glyphs paint the way they did. That also keeps blocks like
+this, whose only painting was artwork the pass dropped:
 
 ```
 q
@@ -86,12 +85,12 @@ qpdf backdrop.pdf --overlay textonly.pdf -- out.pdf
 It works better than I expected. On the generated sample the text renders, and
 `pdftotext` gets all 397 words out, the same as the purpose-built tool. On real
 exports it is less kind: I have watched the overlay lose text off the page while
-every word still extracts, which is the worst way for a conversion to fail,
-because nothing you can grep tells you it happened.
+every word still extracts, the worst way for a conversion to fail, because
+nothing you can grep tells you it happened.
 
-It just does not fix the bug. The text-only layer keeps the original graphics
-state, soft masks and transparency groups included, and the overlay puts every
-bit of it back on the page:
+It does not fix the bug. The text-only layer keeps the original graphics state,
+soft masks and transparency groups included, and the overlay puts every bit of
+it back on the page:
 
 | candidate                   | MB    | words | masks / groups |
 |-----------------------------|-------|-------|----------------|
@@ -99,8 +98,8 @@ bit of it back on the page:
 | gs backdrop + text overlay  | 2.59  | 397   | 18 / 25        |
 | gs -dCompatibilityLevel=1.3 | 10.15 | 0     | 0 / 0          |
 
-The third row is Ghostscript's transparency flattening, which does remove the
-compositing. It removes the text with it, and the file gets ten times bigger.
+The third row is Ghostscript's transparency flattening, which does delete the
+compositing. It takes the text with it, and the file gets ten times bigger.
 
 The masks and groups column counts what a viewer executes while drawing the
 page, not what the file contains. An orphan mask dictionary in a resource entry
@@ -110,18 +109,17 @@ is never composited, so counting it would report work nobody does.
 
 The tool assumes text is the topmost layer. That is true of slide decks. It is
 false the moment artwork was drawn over text: a redaction bar, a cover box, a
-stamp, a watermark. On those pages the covered text is replayed above the thing
-that covered it, and a page that looked safe starts showing what it hid.
+stamp, a watermark. On those pages the hidden text is replayed above whatever
+covered it, and a page that looked safe starts showing what it hid.
 
 Being right about that in the README is not enough. Somebody will run it on a
 statement with white boxes over the numbers, see a file appear, and send it.
 
-So the check has to be a real one. Render both documents, then count changed
-pixels whose neighbourhood in the original is featureless. Rasterising and
-re-encoding a page moves almost every pixel a little and edge pixels a lot, so a
-plain image diff cannot tell a good flatten from a broken one. But re-encoding
-noise sits on edges. Text that used to be covered lands in the middle of an area
-the original drew flat.
+The check renders both documents, then counts changed pixels whose neighbourhood
+in the original is featureless. Rasterising and re-encoding a page moves almost
+every pixel a little and edge pixels a lot, so a plain image diff cannot tell a
+good flatten from a broken one. But that noise sits on edges. Text that used to
+be hidden lands in the middle of an area the original drew flat.
 
 A good page scores zero on that. The sample with cover boxes scores 0.46%, and
 every real deck I have run scores zero, so the bar sits a long way from both.
