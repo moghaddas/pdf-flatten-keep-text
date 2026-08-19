@@ -1,25 +1,24 @@
-# pdf-flatten-keep-text
+# skia-pdf-flatten-keep-text
 
-A slide deck opens black in macOS Preview. Pages paint only after a scroll, then
-un-paint when you scroll away. It reads like a viewer bug. It is the file.
+**Makes an artwork-heavy Chrome print-to-PDF export open in macOS Preview.**
+Chrome's print-to-PDF backend stamps `Producer: Skia/PDF`, and a deck out of it
+can open black: pages paint only after a scroll, then un-paint when you scroll
+away. It reads like a viewer bug. It is the file. This tool flattens each page's
+artwork to one opaque image and replays the text over it, so the page opens
+anywhere and still selects, searches and copies.
 
-Check `Producer` on a file that does this and you get `Skia/PDF`, Chrome's
-print-to-PDF backend. Skia builds each page from stacked transparency groups and
-luminosity soft masks, and a viewer has to alpha-composite every one of them on
-each repaint. Pile up enough and Preview gives up. Mine came out of Claude
-Design. A plain Chrome printout carries almost none of that structure and opens
-fine, so this is about heavy artwork, not about Chrome.
-
-Re-encoding the images does not help. Decoded weight falls, the pages stay
-black. Removing the compositing is what fixes it.
-
-This flattens the artwork to one opaque image per page and replays the text over
-it, so the page still selects, searches and copies.
+Only heavy artwork does this. A plain Chrome printout carries almost none of the
+same structure and opens fine, so the target is the export, not the browser.
+Mine came out of Claude Design. Re-encoding the images does not help: decoded
+weight falls, the pages stay black. Removing the compositing is what fixes it.
 
 ```
-pipx install pdf-flatten-keep-text   # also needs poppler-utils, see below
-pdf-flatten-keep-text deck.pdf
+pipx install git+https://github.com/moghaddas/skia-pdf-flatten-keep-text
+skia-pdf-flatten-keep-text deck.pdf
 ```
+
+`pipx` also needs poppler-utils, which is not a Python package. See
+[What you need](#what-you-need).
 
 ## Never run this on a redacted document
 
@@ -39,7 +38,7 @@ documents and counts new marks landing where the original drew flat. Cover a
 line of text, and those marks are the line coming back:
 
 ```
-$ pdf-flatten-keep-text sample-redacted.pdf
+$ skia-pdf-flatten-keep-text sample-redacted.pdf
   new marks on flat areas: 0.4603% (page 1)   FAIL: over 0.0200%
   verification FAILED - output quarantined at sample-redacted-hybrid.pdf.rejected
 ```
@@ -63,7 +62,7 @@ xobjects, 42 of them soft-mask groups:
 
 ```
 $ python3 make-sample.py .
-$ pdf-flatten-keep-text sample-deck.pdf
+$ skia-pdf-flatten-keep-text sample-deck.pdf
 3 pages, 120 form xobjects (3 contain text, 42 are mask groups)
 ```
 
@@ -97,9 +96,13 @@ and `pdfimages`. Pillow installs automatically with the package below; poppler
 does not, since it is not a Python package:
 
 ```
-pipx install pdf-flatten-keep-text   # or: uvx pdf-flatten-keep-text deck.pdf
+GH=git+https://github.com/moghaddas/skia-pdf-flatten-keep-text
+pipx install $GH                     # or: uvx --from $GH skia-pdf-flatten-keep-text deck.pdf
 apt install poppler-utils            # or: brew install poppler
 ```
+
+It is not on PyPI, so install from the repository. `pipx` and `uvx` both take a
+`git+https://` source directly.
 
 Running either command without poppler-utils installed exits with the exact
 package name to install, rather than a raw subprocess traceback.
@@ -115,7 +118,7 @@ point this at a PDF from an untrusted source.
 ## Use
 
 ```
-pdf-flatten-keep-text IN.pdf [OUT.pdf]     default OUT: IN-hybrid.pdf
+skia-pdf-flatten-keep-text IN.pdf [OUT.pdf]     default OUT: IN-hybrid.pdf
   --dpi N          backdrop render resolution   (default 300)
   --quality N      backdrop JPEG quality        (default 90)
   --keep-temp      leave the intermediate files in place
@@ -170,10 +173,10 @@ Measured on `sample-deck.pdf`, on this machine, with `python3 bench.py`:
 
 | candidate                   | MB    | words | img/pg | masks / groups | marks added | marks lost | exit |
 |-----------------------------|-------|-------|--------|----------------|-------------|------------|------|
-| pdf-flatten-keep-text       | 1.00  | 397   | 1      | 0 / 0          | 0.0000%     | 0.0001%    | 0    |
+| skia-pdf-flatten-keep-text       | 1.00  | 397   | 1      | 0 / 0          | 0.0000%     | 0.0001%    | 0    |
 | gs backdrop + text overlay  | 2.59  | 397   | 1      | 18 / 25        | 0.0230%     | 0.0000%    | 0    |
 | gs -dCompatibilityLevel=1.3 | 10.15 | 0     | 1      | 0 / 0          | 0.0000%     | 0.0001%    | 0    |
-| pdf-flatten-to-jpeg         | 1.87  | 0     | 1      | 0 / 0          | 0.0000%     | 0.0001%    | 0    |
+| skia-pdf-flatten-to-jpeg         | 1.87  | 0     | 1      | 0 / 0          | 0.0000%     | 0.0001%    | 0    |
 
 Input: 0.07 MB, 3 pages, 397 words.
 
@@ -194,13 +197,13 @@ if file size matters more than zoom.
 
 ## The companion tool
 
-`pdf-flatten-to-jpeg` rasterises everything, text included, and rebuilds the
+`skia-pdf-flatten-to-jpeg` rasterises everything, text included, and rebuilds the
 document from the images. No fonts, no layer to select. Use it when the page must
-render and nobody needs to copy from it, or when `pdf-flatten-keep-text` rejects
+render and nobody needs to copy from it, or when `skia-pdf-flatten-keep-text` rejects
 the file and you need something today.
 
 ```
-pdf-flatten-to-jpeg deck.pdf
+skia-pdf-flatten-to-jpeg deck.pdf
 ```
 
 ## Reproduce all of it
@@ -211,8 +214,8 @@ package, so run these from a checkout with an editable install:
 ```
 pip install -e .
 python3 make-sample.py .                                  # both samples
-pdf-flatten-keep-text sample-deck.pdf                      # exits 0
-pdf-flatten-keep-text sample-redacted.pdf                  # exits 1, quarantined
+skia-pdf-flatten-keep-text sample-deck.pdf                      # exits 0
+skia-pdf-flatten-keep-text sample-redacted.pdf                  # exits 1, quarantined
 python3 bench.py sample-deck.pdf                           # the table above
 ```
 
