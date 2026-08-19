@@ -17,7 +17,8 @@ This flattens the artwork to one opaque image per page and replays the text over
 it, so the page still selects, searches and copies.
 
 ```
-python3 pdf-flatten-keep-text deck.pdf
+pipx install pdf-flatten-keep-text   # also needs poppler-utils, see below
+pdf-flatten-keep-text deck.pdf
 ```
 
 ## Never run this on a redacted document
@@ -38,7 +39,7 @@ documents and counts new marks landing where the original drew flat. Cover a
 line of text, and those marks are the line coming back:
 
 ```
-$ python3 pdf-flatten-keep-text sample-redacted.pdf
+$ pdf-flatten-keep-text sample-redacted.pdf
   new marks on flat areas: 0.4603% (page 1)   FAIL: over 0.0200%
   verification FAILED - output quarantined at sample-redacted-hybrid.pdf.rejected
 ```
@@ -62,7 +63,7 @@ xobjects, 42 of them soft-mask groups:
 
 ```
 $ python3 make-sample.py .
-$ python3 pdf-flatten-keep-text sample-deck.pdf
+$ pdf-flatten-keep-text sample-deck.pdf
 3 pages, 120 form xobjects (3 contain text, 42 are mask groups)
 ```
 
@@ -91,16 +92,25 @@ delete.
 
 ## What you need
 
-Python 3.8 or newer, Pillow, and poppler-utils for `pdftoppm`, `pdfinfo`,
-`pdftotext` and `pdfimages`.
+Python 3.8 or newer, and poppler-utils for `pdftoppm`, `pdfinfo`, `pdftotext`
+and `pdfimages`. Pillow installs automatically with the package below; poppler
+does not, since it is not a Python package:
 
 ```
-pip install pillow
-apt install poppler-utils      # or: brew install poppler
+pipx install pdf-flatten-keep-text   # or: uvx pdf-flatten-keep-text deck.pdf
+apt install poppler-utils            # or: brew install poppler
 ```
 
-No PDF library. `ctok.py` is a small content-stream tokenizer and object-graph
-reader, and it is the only import.
+Running either command without poppler-utils installed exits with the exact
+package name to install, rather than a raw subprocess traceback.
+
+No PDF library beyond Pillow. `ctok.py` is a small content-stream tokenizer
+and object-graph reader, and it is the only PDF-parsing import.
+
+The backdrop render has no memory ceiling: `Image.MAX_IMAGE_PIXELS` is unset
+so a legitimate large-format page still renders at 300 dpi, but the same
+setting means a hostile PDF can drive memory use arbitrarily high. Do not
+point this at a PDF from an untrusted source.
 
 ## Use
 
@@ -190,16 +200,20 @@ render and nobody needs to copy from it, or when `pdf-flatten-keep-text` rejects
 the file and you need something today.
 
 ```
-python3 pdf-flatten-to-jpeg deck.pdf
+pdf-flatten-to-jpeg deck.pdf
 ```
 
 ## Reproduce all of it
 
+`make-sample.py` and `bench.py` are dev-only and not part of the installed
+package, so run these from a checkout with an editable install:
+
 ```
+pip install -e .
 python3 make-sample.py .                                  # both samples
-python3 pdf-flatten-keep-text sample-deck.pdf             # exits 0
-python3 pdf-flatten-keep-text sample-redacted.pdf         # exits 1, quarantined
-python3 bench.py sample-deck.pdf                          # the table above
+pdf-flatten-keep-text sample-deck.pdf                      # exits 0
+pdf-flatten-keep-text sample-redacted.pdf                  # exits 1, quarantined
+python3 bench.py sample-deck.pdf                           # the table above
 ```
 
 `make-sample.py` writes plain uncompressed PDF with no library, so you can open
