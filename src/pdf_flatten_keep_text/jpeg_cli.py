@@ -31,6 +31,17 @@ Image.MAX_IMAGE_PIXELS = None
 POPPLER_BINARIES = ('pdftoppm', 'pdfinfo', 'pdfimages')
 
 
+def check_input(path):
+    """Exit with a message when the input is absent, a directory, or not a PDF."""
+    if not os.path.exists(path):
+        sys.exit('no such file: ' + path)
+    if os.path.isdir(path):
+        sys.exit('input is a directory, not a file: ' + path)
+    with open(path, 'rb') as fh:
+        if fh.read(5) != b'%PDF-':
+            sys.exit('not a PDF (no %PDF- header): ' + path)
+
+
 def check_poppler():
     """Exit with an install command if a required poppler-utils binary is missing."""
     missing = [b for b in POPPLER_BINARIES if shutil.which(b) is None]
@@ -204,6 +215,7 @@ def main():
     ap.add_argument('--quality', type=int, default=90)
     ap.add_argument('--subsampling', type=int, default=0, choices=(0, 1, 2))
     a = ap.parse_args()
+    check_input(a.input)
     out = a.output or re.sub(r'\.pdf$', '', a.input, flags=re.I) + '-flat.pdf'
     flatten(a.input, out, a.dpi, a.quality, a.subsampling)
     print('verifying:')

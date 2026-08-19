@@ -54,6 +54,17 @@ TEXT_SHOW = {b'Tj', b'TJ', b"'", b'"'}
 DROP_IN_TEXT = {b'sh', b'BI', b'ID', b'EI'}
 
 
+def check_input(path):
+    """Exit with a message when the input is absent, a directory, or not a PDF."""
+    if not os.path.exists(path):
+        sys.exit('no such file: ' + path)
+    if os.path.isdir(path):
+        sys.exit('input is a directory, not a file: ' + path)
+    with open(path, 'rb') as fh:
+        if fh.read(5) != b'%PDF-':
+            sys.exit('not a PDF (no %PDF- header): ' + path)
+
+
 def check_poppler():
     """Exit with an install command if a required poppler-utils binary is missing."""
     missing = [b for b in POPPLER_BINARIES if shutil.which(b) is None]
@@ -843,6 +854,7 @@ def main():
                     help='keep the output under its normal name even when '
                          'verification fails')
     a = ap.parse_args()
+    check_input(a.input)
     out = a.output or re.sub(r'\.pdf$', '', a.input, flags=re.I) + '-hybrid.pdf'
     build(a.input, out, a.dpi, a.quality, a.keep_temp)
     print('verifying:')
