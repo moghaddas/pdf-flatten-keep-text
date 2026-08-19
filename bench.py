@@ -15,8 +15,6 @@ neighbourhood the original renders featureless.
 
 Usage:  bench.py [sample-deck.pdf] [--keep]
 """
-import importlib.machinery
-import importlib.util
 import os
 import re
 import subprocess
@@ -24,19 +22,20 @@ import sys
 import tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+SRC = os.path.join(HERE, 'src')
 
 
 def load_tool():
-    spec = importlib.util.spec_from_loader(
-        'flatten', importlib.machinery.SourceFileLoader(
-            'flatten', os.path.join(HERE, 'pdf-flatten-keep-text')))
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
+    # cli.py imports ctok with a package-relative import, so it must load as
+    # part of the pdf_flatten_keep_text package rather than as a bare file.
+    sys.path.insert(0, SRC)
+    import pdf_flatten_keep_text.cli as mod
     return mod
 
 
 def run(cmd, **kw):
-    return subprocess.run(cmd, capture_output=True, text=True, **kw)
+    env = {**os.environ, 'PYTHONPATH': SRC}
+    return subprocess.run(cmd, capture_output=True, text=True, env=env, **kw)
 
 
 def words(path):
@@ -62,8 +61,7 @@ def pages(path):
 
 def build_tool(src, out):
     """This repository's tool. Exit 1 means it quarantined its own output."""
-    r = run([sys.executable, os.path.join(HERE, 'pdf-flatten-keep-text'),
-             src, out])
+    r = run([sys.executable, '-m', 'pdf_flatten_keep_text.cli', src, out])
     return out if os.path.exists(out) else out + '.rejected', r.returncode
 
 
@@ -88,8 +86,7 @@ def build_gs_flatten(src, out, work):
 
 def build_jpeg(src, out, work):
     """The companion tool. Total rasterisation, no text layer at all."""
-    r = run([sys.executable, os.path.join(HERE, 'pdf-flatten-to-jpeg'),
-             src, out])
+    r = run([sys.executable, '-m', 'pdf_flatten_keep_text.jpeg_cli', src, out])
     return out, r.returncode
 
 
