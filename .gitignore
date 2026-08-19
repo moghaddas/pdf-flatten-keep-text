@@ -3,3 +3,6 @@ __pycache__/
 *-hybrid.pdf
 *-flat.pdf
 *.rejected
+dist/
+build/
+*.egg-info/

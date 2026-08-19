@@ -1,0 +1,34 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pdf-flatten-keep-text"
+version = "0.1.0"
+description = "Flatten a PDF's artwork to one image per page while keeping the text real"
+readme = "README.md"
+license = { text = "MIT" }
+authors = [{ name = "Mo Moghaddas" }]
+requires-python = ">=3.8"
+keywords = ["pdf", "poppler", "flatten", "transparency", "print-to-pdf", "skia"]
+classifiers = [
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Topic :: Multimedia :: Graphics :: Graphics Conversion",
+    "Topic :: Text Processing",
+]
+dependencies = ["pillow>=9.0"]
+
+[project.urls]
+Homepage = "https://github.com/moghaddas/pdf-flatten-keep-text"
+Issues = "https://github.com/moghaddas/pdf-flatten-keep-text/issues"
+
+[project.scripts]
+pdf-flatten-keep-text = "pdf_flatten_keep_text.cli:main"
+pdf-flatten-to-jpeg = "pdf_flatten_keep_text.jpeg_cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
