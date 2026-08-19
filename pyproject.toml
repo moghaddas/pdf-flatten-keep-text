@@ -3,7 +3,7 @@ requires = ["setuptools>=61"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "pdf-flatten-keep-text"
+name = "skia-pdf-flatten-keep-text"
 version = "0.1.0"
 description = "Flatten a PDF's artwork to one image per page while keeping the text real"
 readme = "README.md"
@@ -23,12 +23,12 @@ classifiers = [
 dependencies = ["pillow>=9.0"]
 
 [project.urls]
-Homepage = "https://github.com/moghaddas/pdf-flatten-keep-text"
-Issues = "https://github.com/moghaddas/pdf-flatten-keep-text/issues"
+Homepage = "https://github.com/moghaddas/skia-pdf-flatten-keep-text"
+Issues = "https://github.com/moghaddas/skia-pdf-flatten-keep-text/issues"
 
 [project.scripts]
-pdf-flatten-keep-text = "pdf_flatten_keep_text.cli:main"
-pdf-flatten-to-jpeg = "pdf_flatten_keep_text.jpeg_cli:main"
+skia-pdf-flatten-keep-text = "skia_pdf_flatten_keep_text.cli:main"
+skia-pdf-flatten-to-jpeg = "skia_pdf_flatten_keep_text.jpeg_cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

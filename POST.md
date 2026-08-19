@@ -102,7 +102,7 @@ it back on the page:
 
 | candidate                   | MB    | words | masks / groups |
 |-----------------------------|-------|-------|----------------|
-| pdf-flatten-keep-text       | 1.00  | 397   | 0 / 0          |
+| skia-pdf-flatten-keep-text       | 1.00  | 397   | 0 / 0          |
 | gs backdrop + text overlay  | 2.59  | 397   | 18 / 25        |
 | gs -dCompatibilityLevel=1.3 | 10.15 | 0     | 0 / 0          |
 
@@ -138,6 +138,6 @@ sent like one.
 
 ---
 
-`pdf-flatten-keep-text`, MIT, at
-[github.com/moghaddas/pdf-flatten-keep-text](https://github.com/moghaddas/pdf-flatten-keep-text).
+`skia-pdf-flatten-keep-text`, MIT, at
+[github.com/moghaddas/skia-pdf-flatten-keep-text](https://github.com/moghaddas/skia-pdf-flatten-keep-text).
 The repository generates its own samples, including the one it refuses.

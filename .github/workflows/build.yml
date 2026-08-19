@@ -26,5 +26,5 @@ jobs:
           uv pip install --python .venv/bin/python dist/*.whl
       - name: Run the console scripts
         run: |
-          .venv/bin/pdf-flatten-keep-text --help
-          .venv/bin/pdf-flatten-to-jpeg --help
+          .venv/bin/skia-pdf-flatten-keep-text --help
+          .venv/bin/skia-pdf-flatten-to-jpeg --help

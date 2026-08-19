@@ -10,7 +10,7 @@ content stream. Nothing is embedded that a viewer can skip, so a repaint has
 to composite the whole stack.
 
 sample-redacted.pdf is the counter-example: cover boxes drawn OVER text, the
-one layout pdf-flatten-keep-text must never touch.
+one layout skia-pdf-flatten-keep-text must never touch.
 
 Written with no PDF library on purpose. The output is a plain uncompressed
 PDF 1.4 file, so `strings` and a text editor both work on it.

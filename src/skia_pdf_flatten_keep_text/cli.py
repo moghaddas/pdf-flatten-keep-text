@@ -24,7 +24,7 @@ The output is checked after the build (page count, byte-identical text layer,
 one image per page, no compositing left on the drawing path). A failed check
 moves the output to <name>.rejected and exits 1.
 
-Usage:  pdf-flatten-keep-text IN.pdf [OUT.pdf]    (default OUT: IN-hybrid.pdf)
+Usage:  skia-pdf-flatten-keep-text IN.pdf [OUT.pdf]    (default OUT: IN-hybrid.pdf)
         --dpi N          backdrop render resolution   (default 300)
         --quality N      backdrop JPEG quality        (default 90)
         --keep-temp      leave the intermediate files in place

@@ -9,7 +9,7 @@ code the tool uses on itself. Two of the numbers matter most:
   marks lost    the same measurement run backwards. Something the original
                 drew is gone. Text that no longer renders scores here.
 
-Both come from flat_area_change() in pdf-flatten-keep-text, at 100 dpi
+Both come from flat_area_change() in skia-pdf-flatten-keep-text, at 100 dpi
 grayscale, counting per-pixel moves above 96 of 255 inside a 5 pixel
 neighbourhood the original renders featureless.
 
@@ -27,9 +27,9 @@ SRC = os.path.join(HERE, 'src')
 
 def load_tool():
     # cli.py imports ctok with a package-relative import, so it must load as
-    # part of the pdf_flatten_keep_text package rather than as a bare file.
+    # part of the skia_pdf_flatten_keep_text package rather than as a bare file.
     sys.path.insert(0, SRC)
-    import pdf_flatten_keep_text.cli as mod
+    import skia_pdf_flatten_keep_text.cli as mod
     return mod
 
 
@@ -61,7 +61,7 @@ def pages(path):
 
 def build_tool(src, out):
     """This repository's tool. Exit 1 means it quarantined its own output."""
-    r = run([sys.executable, '-m', 'pdf_flatten_keep_text.cli', src, out])
+    r = run([sys.executable, '-m', 'skia_pdf_flatten_keep_text.cli', src, out])
     return out if os.path.exists(out) else out + '.rejected', r.returncode
 
 
@@ -86,7 +86,7 @@ def build_gs_flatten(src, out, work):
 
 def build_jpeg(src, out, work):
     """The companion tool. Total rasterisation, no text layer at all."""
-    r = run([sys.executable, '-m', 'pdf_flatten_keep_text.jpeg_cli', src, out])
+    r = run([sys.executable, '-m', 'skia_pdf_flatten_keep_text.jpeg_cli', src, out])
     return out, r.returncode
 
 
@@ -103,10 +103,10 @@ def main():
           f'{pages(src)} pages, {words(src)} words\n')
 
     builders = [
-        ('pdf-flatten-keep-text', build_tool),
+        ('skia-pdf-flatten-keep-text', build_tool),
         ('gs backdrop + text overlay', build_gs_overlay),
         ('gs -dCompatibilityLevel=1.3', build_gs_flatten),
-        ('pdf-flatten-to-jpeg', build_jpeg),
+        ('skia-pdf-flatten-to-jpeg', build_jpeg),
     ]
     rows = []
     for name, fn in builders:

@@ -11,7 +11,7 @@ The trade is total: the text layer is gone, so the output is not selectable,
 searchable, or copyable, and it no longer scales past the render resolution.
 Keep the original as the source of truth and ship this as the viewing copy.
 
-Usage:  pdf-flatten-to-jpeg IN.pdf [OUT.pdf]     (default OUT: IN-flat.pdf)
+Usage:  skia-pdf-flatten-to-jpeg IN.pdf [OUT.pdf]     (default OUT: IN-flat.pdf)
         --dpi N          render resolution           (default 300)
         --quality N      JPEG quality                (default 90)
         --subsampling N  0 = 4:4:4, 2 = 4:2:0        (default 0)
@@ -111,7 +111,7 @@ def build(jpegs, boxes, title, dst):
 
     info_id = 3 + n_pages * 3
     objs[info_id] = (b'<< /Title (' + pdf_escape(title).encode('latin-1', 'replace')
-                     + b') /Producer (pdf-flatten-to-jpeg) >>')
+                     + b') /Producer (skia-pdf-flatten-to-jpeg) >>')
 
     out = bytearray(b'%PDF-1.4\n%\xe2\xe3\xcf\xd3\n')
     offsets = {}
