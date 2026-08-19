@@ -41,16 +41,29 @@ import zlib
 
 from PIL import Image, ImageChops, ImageFilter
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from ctok import Pdf, tokenize_with_inline_images, dict_span  # noqa: E402
+from .ctok import Pdf, tokenize_with_inline_images, dict_span
 
 Image.MAX_IMAGE_PIXELS = None
+
+POPPLER_BINARIES = ('pdftoppm', 'pdfinfo', 'pdftotext', 'pdfimages')
 
 PATH_CONSTRUCT = {b'm', b'l', b'c', b'v', b'y', b'h', b're'}
 PATH_PAINT = {b'S', b's', b'f', b'F', b'f*', b'B', b'B*', b'b', b'b*', b'n'}
 CLIP = {b'W', b'W*'}
 TEXT_SHOW = {b'Tj', b'TJ', b"'", b'"'}
 DROP_IN_TEXT = {b'sh', b'BI', b'ID', b'EI'}
+
+
+def check_poppler():
+    """Exit with an install command if a required poppler-utils binary is missing."""
+    missing = [b for b in POPPLER_BINARIES if shutil.which(b) is None]
+    if missing:
+        sys.exit(
+            'missing poppler-utils binaries: ' + ', '.join(missing) + '\n'
+            'install them first:\n'
+            '  apt install poppler-utils      # Debian/Ubuntu\n'
+            '  brew install poppler           # macOS'
+        )
 
 
 # --------------------------------------------------------------- resources --
@@ -817,8 +830,9 @@ def compositing_on_drawing_path(path):
     return smask, groups
 
 
-if __name__ == '__main__':
+def main():
     import argparse
+    check_poppler()
     ap = argparse.ArgumentParser(description=__doc__.split('\n')[0])
     ap.add_argument('input')
     ap.add_argument('output', nargs='?')
@@ -848,3 +862,7 @@ if __name__ == '__main__':
     print(f'\n  verification FAILED - output quarantined at {rejected}')
     print('  Examine it before you use it. To keep the normal name, use --force.')
     sys.exit(1)
+
+
+if __name__ == '__main__':
+    main()

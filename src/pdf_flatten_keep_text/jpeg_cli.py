@@ -28,6 +28,20 @@ from PIL import Image
 
 Image.MAX_IMAGE_PIXELS = None
 
+POPPLER_BINARIES = ('pdftoppm', 'pdfinfo', 'pdfimages')
+
+
+def check_poppler():
+    """Exit with an install command if a required poppler-utils binary is missing."""
+    missing = [b for b in POPPLER_BINARIES if shutil.which(b) is None]
+    if missing:
+        sys.exit(
+            'missing poppler-utils binaries: ' + ', '.join(missing) + '\n'
+            'install them first:\n'
+            '  apt install poppler-utils      # Debian/Ubuntu\n'
+            '  brew install poppler           # macOS'
+        )
+
 
 def page_boxes(path):
     """Per-page (width, height) in PostScript points, in page order."""
@@ -107,7 +121,7 @@ def build(jpegs, boxes, title, dst):
     return len(out)
 
 
-def main(src, dst, dpi, quality, subsampling):
+def flatten(src, dst, dpi, quality, subsampling):
     title = ''
     info = subprocess.run(['pdfinfo', src], capture_output=True, text=True).stdout
     m = re.search(r'^Title:\s+(.*)$', info, re.M)
@@ -180,8 +194,9 @@ def verify(src, dst, dpi):
     return ok
 
 
-if __name__ == '__main__':
+def main():
     import argparse
+    check_poppler()
     ap = argparse.ArgumentParser(description=__doc__.split('\n')[1])
     ap.add_argument('input')
     ap.add_argument('output', nargs='?')
@@ -190,6 +205,10 @@ if __name__ == '__main__':
     ap.add_argument('--subsampling', type=int, default=0, choices=(0, 1, 2))
     a = ap.parse_args()
     out = a.output or re.sub(r'\.pdf$', '', a.input, flags=re.I) + '-flat.pdf'
-    main(a.input, out, a.dpi, a.quality, a.subsampling)
+    flatten(a.input, out, a.dpi, a.quality, a.subsampling)
     print('verifying:')
     sys.exit(0 if verify(a.input, out, a.dpi) else 1)
+
+
+if __name__ == '__main__':
+    main()
